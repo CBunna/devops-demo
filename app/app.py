@@ -1,4 +1,5 @@
 import os
+import socket
 from flask import Flask, jsonify
 
 app = Flask(__name__)
@@ -11,7 +12,8 @@ def home():
     return jsonify({
         "status": "ok",
         "environment": APP_ENV,
-        "message": "DevOps Demo App is running"
+        "message": "DevOps Demo App is running",
+        "pod": socket.gethostname()
     })
 
 @app.route("/health")
@@ -20,7 +22,11 @@ def health():
 
 @app.route("/version")
 def version():
-    return jsonify({"version": "1.0.0", "env": APP_ENV}), 200
+    return jsonify({
+        "version": "1.0.0",
+        "env": APP_ENV,
+        "pod": socket.gethostname()
+    })
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
