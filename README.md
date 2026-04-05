@@ -1,21 +1,25 @@
 # DevOps Demo App — Beginner's Guide
 
-A simple web app that shows how Docker, Flask, Nginx, and Docker Compose work together.
+A Python Flask web app running in Docker with Nginx as a reverse proxy, Prometheus for metrics collection, and Grafana for visualization.
 
 ---
 
-## What Is This App?
-
-This is a small Python web server (Flask) that runs inside Docker containers. Nginx sits in front of it and handles incoming web requests, then forwards them to the Flask app.
+## Architecture
 
 ```
 Your Browser
      |
      v
-  Nginx (port 80)       <-- the "front door"
+  Nginx (port 80)           ← reverse proxy & security
      |
      v
-  Flask (port 5000)     <-- the actual app
+  Flask (port 5000)         ← web application
+     |
+     v
+  Prometheus (port 9090)    ← scrapes /metrics every 15s
+     |
+     v
+  Grafana (port 3000)       ← visualizes Prometheus data
 ```
 
 ---
@@ -25,80 +29,88 @@ Your Browser
 ```
 devops-demo-app/
 ├── app/
-│   ├── app.py            # The Flask web application
-│   ├── Dockerfile        # Instructions to build the Flask container
-│   └── requirements.txt  # Python packages needed
+│   ├── app.py              # Flask application
+│   ├── Dockerfile          # Multi-stage container build
+│   └── requirements.txt    # Python dependencies
 ├── nginx/
-│   └── nginx.conf        # Nginx configuration (reverse proxy)
-└── docker-compose.yml    # Wires everything together
+│   └── nginx.conf          # Reverse proxy config
+├── monitoring/
+│   └── prometheus.yml      # Prometheus scrape config
+├── k8s/
+│   ├── flask-deployment.yaml
+│   ├── flask-service.yaml
+│   ├── ingress.yaml
+│   └── configMap.yaml
+├── docker-compose.yml      # Runs all services together
+└── .env                    # Environment variables (not committed)
 ```
 
 ---
 
-## Key Files Explained
+## API Endpoints
 
-### `app/app.py` — The Web App
+| Endpoint   | Description                                      |
+|------------|--------------------------------------------------|
+| `GET /`    | Returns app status, environment, and pod name    |
+| `GET /health` | Health check — returns `{"healthy": true}`    |
+| `GET /version` | Returns version and environment info         |
+| `GET /metrics` | Prometheus metrics (blocked at Nginx — internal only) |
 
-A minimal Flask app with two endpoints:
+### Example responses
 
-| URL | What it does |
-|-----|-------------|
-| `/` | Returns app status and environment info as JSON |
-| `/health` | Returns `{"healthy": true}` — used to check if the app is alive |
+```bash
+curl http://localhost/
+# {"environment":"development","message":"DevOps Demo App is running","pod":"abc123","status":"ok"}
 
-### `app/Dockerfile` — How to Build the Container
+curl http://localhost/health
+# {"healthy":true}
 
-Uses a **multi-stage build** (a best practice):
+curl http://localhost/version
+# {"env":"development","pod":"abc123","version":"1.0.0"}
 
-1. **Stage 1 (builder):** Installs Python packages
-2. **Stage 2 (runtime):** Copies only what's needed — keeps the image small
-
-Also runs the app as a non-root user for security, and uses **Gunicorn** (a production-grade server) instead of Flask's built-in development server.
-
-### `nginx/nginx.conf` — Nginx Config
-
-Nginx acts as a **reverse proxy** — it receives requests on port 80 and forwards them to Flask on port 5000. This is a common real-world pattern.
-
-### `docker-compose.yml` — The Glue
-
-Defines two services and how they connect:
-
-| Service | Description |
-|---------|-------------|
-| `flask` | Builds and runs the Python app |
-| `nginx` | Runs the Nginx proxy in front of Flask |
+curl http://localhost/metrics
+# 403 Forbidden  ← blocked by Nginx intentionally
+```
 
 ---
 
-## How to Run It
+## How to Run (Docker Compose)
 
 ### Prerequisites
 
-- [Docker](https://docs.docker.com/get-docker/) installed
-- [Docker Compose](https://docs.docker.com/compose/) installed (included with Docker Desktop)
+- [Docker Desktop](https://docs.docker.com/get-docker/) installed
+- Docker Desktop file sharing set to **gRPC FUSE** (Settings → General)
 
-### Steps
+### Setup
 
-1. Create a `.env` file in the `devops-demo-app/` directory:
+1. Create a `.env` file:
 
 ```bash
 APP_ENV=development
 SECRET_KEY=my-secret-key
 ```
 
-2. Start everything:
+2. Start all services:
 
 ```bash
-cd devops-demo-app
-docker compose up --build
+docker compose up -d
 ```
 
-3. Open your browser and visit:
+3. Verify everything is running:
 
-- `http://localhost/` — see the app response
-- `http://localhost/health` — check if the app is healthy
+```bash
+docker compose ps
+```
 
-### Stop the app
+### Access the services
+
+| Service    | URL                        | Credentials     |
+|------------|----------------------------|-----------------|
+| Flask app  | http://localhost/          | —               |
+| Prometheus | http://localhost:9090      | —               |
+| Grafana    | http://localhost:3000      | admin / admin   |
+
+### Stop all services
 
 ```bash
 docker compose down
@@ -106,31 +118,138 @@ docker compose down
 
 ---
 
-## Concepts You'll Learn Here
+## How to Run Locally (without Docker)
 
-| Concept | Where to see it |
-|---------|----------------|
-| Docker containers | `Dockerfile` |
-| Multi-stage builds | `Dockerfile` (Stage 1 & 2) |
-| Non-root user in containers | `Dockerfile` (adduser) |
-| Gunicorn (WSGI server) | `Dockerfile` (CMD) |
-| Reverse proxy | `nginx.conf` |
-| Docker Compose | `docker-compose.yml` |
-| Environment variables | `.env` + `app.py` |
-| Health checks | `/health` endpoint |
+```bash
+cd app
+pip install -r requirements.txt
+python app.py
+# App runs on http://localhost:5000
+```
+
+> Note: On macOS, port 5000 is used by AirPlay Receiver.
+> Disable it in System Settings → General → AirDrop & Handoff, or run Flask on a different port.
 
 ---
 
-## Common Questions
+## Monitoring with Prometheus & Grafana
 
-**Why is Nginx in front of Flask?**
-Flask's built-in server is not meant for production. Nginx handles things like slow clients, TLS (HTTPS), and load balancing. Flask just focuses on application logic.
+### How it works
 
-**What is a reverse proxy?**
-It's a server that receives requests on behalf of another server. The client talks to Nginx, Nginx talks to Flask. The client never connects to Flask directly.
+1. Flask exposes metrics at `/metrics` (via `prometheus-flask-exporter`)
+2. Prometheus scrapes `flask:5000/metrics` every 15 seconds
+3. Grafana connects to Prometheus and visualizes the data
 
-**Why multi-stage Docker builds?**
-The final image only contains what the app needs to run — not build tools, pip cache, etc. This makes the image smaller and more secure.
+### Useful Prometheus queries
 
-**What is Gunicorn?**
-A Python WSGI server that can handle multiple requests at the same time using workers. This app runs with 2 workers.
+| Query | What it shows |
+|-------|--------------|
+| `flask_http_request_total` | Total requests per endpoint and status code |
+| `rate(flask_http_request_total[1m])` | Requests per second (last 1 minute) |
+| `flask_http_request_duration_seconds_bucket` | Response time histogram |
+
+### Check Prometheus targets
+
+Open http://localhost:9090 → Status → Targets
+
+The `flask` job should show state **UP**.
+
+### Security note
+
+`/metrics` is blocked at the Nginx level (`403 Forbidden`) so external users cannot read internal metrics. Prometheus scrapes Flask directly on the internal Docker network, bypassing Nginx.
+
+---
+
+## Kubernetes (Minikube)
+
+### Prerequisites
+
+```bash
+minikube start
+eval $(minikube docker-env)          # point Docker CLI to Minikube
+```
+
+### Build and deploy
+
+```bash
+# Build image inside Minikube
+docker build -t bunna44/flask-demo:v1 ./app
+
+# Apply all manifests
+kubectl apply -f k8s/
+```
+
+### Check status
+
+```bash
+kubectl get pods
+kubectl get svc
+kubectl describe deployment flask-deployment
+```
+
+### Access the app
+
+```bash
+# Via NodePort
+curl http://$(minikube ip):30080/
+
+# Or use port forwarding
+kubectl port-forward svc/flask-service 8080:80
+curl http://localhost:8080/
+```
+
+### Useful kubectl commands
+
+```bash
+kubectl logs deployment/flask-deployment    # view app logs
+kubectl rollout restart deployment/flask-deployment  # rolling restart
+kubectl scale deployment flask-deployment --replicas=3  # scale up
+```
+
+---
+
+## Key Concepts in This Project
+
+| Concept | Where to see it |
+|---------|----------------|
+| Multi-stage Docker build | [app/Dockerfile](app/Dockerfile) |
+| Non-root container user | `Dockerfile` — `adduser appuser` |
+| Gunicorn WSGI server | `Dockerfile` — CMD |
+| Reverse proxy | [nginx/nginx.conf](nginx/nginx.conf) |
+| Blocking endpoints at proxy | `nginx.conf` — `/metrics` location |
+| Docker Compose networking | `docker-compose.yml` — services talk by name |
+| Environment variables | `.env` + `app.py` |
+| Prometheus scraping | [monitoring/prometheus.yml](monitoring/prometheus.yml) |
+| Kubernetes Deployment | [k8s/flask-deployment.yaml](k8s/flask-deployment.yaml) |
+| Liveness & readiness probes | `flask-deployment.yaml` |
+| Resource limits | `flask-deployment.yaml` — `resources` block |
+| NodePort service | [k8s/flask-service.yaml](k8s/flask-service.yaml) |
+
+---
+
+## Common Issues
+
+**Port 80 already in use**
+```bash
+sudo lsof -i :80   # find what's using it
+```
+
+**Port 5000 in use on macOS**
+Disable AirPlay Receiver: System Settings → General → AirDrop & Handoff
+
+**Docker bind mount fails with "Is a directory"**
+Switch Docker Desktop file sharing: Settings → General → gRPC FUSE → Apply & Restart
+
+**Minikube `eval $(minikube docker-env)` pointing to wrong daemon**
+```bash
+eval $(minikube docker-env --unset)   # revert to Docker Desktop
+```
+
+**ImagePullBackOff in Kubernetes**
+The image doesn't exist in the registry. Build it inside Minikube first:
+```bash
+eval $(minikube docker-env)
+docker build -t bunna44/flask-demo:v1 ./app
+kubectl patch deployment flask-deployment \
+  -p '{"spec":{"template":{"spec":{"containers":[{"name":"flask","imagePullPolicy":"Never"}]}}}}'
+```
