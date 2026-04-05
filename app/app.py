@@ -1,8 +1,11 @@
 import os
 import socket
 from flask import Flask, jsonify
+from prometheus_flask_exporter import PrometheusMetrics
 
 app = Flask(__name__)
+# expose /metrics endpoint for prometheus
+metrics = PrometheusMetrics(app)
 
 APP_ENV = os.getenv("APP_ENV", "development")
 SECRET_KEY = os.getenv("SECRET_KEY", "fallback-insecure-key")

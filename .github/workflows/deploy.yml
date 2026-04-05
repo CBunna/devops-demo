@@ -25,7 +25,6 @@ jobs:
         run: |
           cd app
           pytest test_app.py -v
-
   build-and-push:
     needs: test
     name: Build and push Image
