@@ -253,3 +253,38 @@ docker build -t bunna44/flask-demo:v1 ./app
 kubectl patch deployment flask-deployment \
   -p '{"spec":{"template":{"spec":{"containers":[{"name":"flask","imagePullPolicy":"Never"}]}}}}'
 ```
+
+
+**Tips**
+```
+Request rate normal + Error rate spiked = app is getting traffic but failing
+  → look at logs for error messages
+
+Request rate dropped to zero + Error rate zero = no traffic reaching app
+  → check nginx, check DNS, check if pods are running
+
+Request rate normal + Error rate normal + Response time spiked = app is slow
+  → check database, check downstream services, check CPU/memory
+
+```
+
+** Example: Error rate spiking to 15%, request rate normal, response time normal**
+
+```
+1. Error rate high + request rate normal
+   = app is receiving traffic but something in the code is failing
+   = not a network problem, not a scaling problem
+
+2. Check which endpoint is causing errors
+   → Grafana: flask_http_request_total{status=~"5.."} grouped by path
+
+3. Check logs for that pod
+   → kubectl logs <pod-name>
+   → kubectl logs <pod-name> --previous
+
+4. Look for error messages, stack traces, exceptions
+
+5. If it is a bad deployment → kubectl rollout undo
+   If it is a code bug → fix, test, redeploy via CI/CD pipeline
+
+```
